@@ -1,0 +1,21 @@
+{
+  "name": "fact",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "alexa-sdk": "^1.0.25",
+    "ask-sdk-core": "^2.0.0",
+    "ask-sdk-model": "^1.0.0",
+    "aws-sdk": "*",
+    "dynamodb-doc": "^1.0.0",
+    "http": "*",
+    "https": "^1.0.0",
+    "i18next": "^15.0.5"
+  }
+}
