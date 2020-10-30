@@ -1,6 +1,3 @@
-// SkillCode generated code.
-// Paste this into an AWS Lambda function based on the Fact blueprint.
-
 const invocationName = "down to hang";
 
 const languageStrings = {
@@ -22,6 +19,11 @@ const Alexa = require("alexa-sdk");
 const https = require("https");
 const AWS = require("aws-sdk");
 const dynamodb_doc = require("dynamodb-doc");
+
+/**
+ * TODO:
+ * add transfer of what user sending request is and use that to update availbility AND return who's free (exclude yourself)
+ */
 
 module.exports.handler = function(event, context, callback) {
     let alexa = Alexa.handler(event, context);
@@ -95,11 +97,11 @@ const handlers = {
     'FindAvailableFriends': function () {
         let docClient = new AWS.DynamoDB.DocumentClient();
         let say = "segfault";
-        
+
         let params = {
           TableName : "d2hTable",
-          FilterExpression: '#u_poo = :val',
-          ExpressionAttributeNames: { '#u_poo': 'Poo' },
+          FilterExpression: '#u_free = :val',
+          ExpressionAttributeNames: { '#u_free': 'Free' },
           ExpressionAttributeValues: { ':val': true }
         };
       
