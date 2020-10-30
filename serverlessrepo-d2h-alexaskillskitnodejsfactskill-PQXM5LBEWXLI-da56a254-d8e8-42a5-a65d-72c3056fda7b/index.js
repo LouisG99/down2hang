@@ -26,11 +26,10 @@ const dynamodb_doc = require("dynamodb-doc");
  */
 
 module.exports.handler = function(event, context, callback) {
-    let alexa = Alexa.handler(event, context);
-    alexa.appId = APP_ID; // 
+  let alexa = Alexa.handler(event, context);
+  alexa.appId = APP_ID; // 
 
   alexa.resources = languageStrings;
-  // alexa.dynamoDBTableName = "d2hTable"; // persistent session attributes
   alexa.registerHandlers(handlers);
   alexa.execute();
 }
@@ -42,7 +41,6 @@ const handlers = {
     this.response
       .speak(say)
       .listen('try again, ' + say);
-
 
     this.emit(':responseReady');
   },
@@ -105,25 +103,32 @@ const handlers = {
       ExpressionAttributeValues: { ':val': true }
     };
 
-    docClient.scan(params).promise()
-      .then(data => {
-        say = "The following people are down to hang right now: ";
-        data.Items.forEach(function (item) {
-          say += item['Name'] + ', ';
-        });
+    console.log(this.event, this.context)
+    let userId = this.event['session']['user']['userId'];
 
-        this.response.speak(say).listen('try again, ' + say);
-        this.emit(':responseReady');
-      },
-        err => {
-          console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
-        });
+    docClient.scan(params).promise()
+    .then(data => {
+      console.log(data);
+      say = "The following people are down to hang right now: ";
+      data.Items.forEach(function (item) {
+        if (item['User'] !== userId) {
+          say += item['Name'] + ', ';
+        }
+      });
+
+      this.response.speak(say).listen('try again, ' + say);
+      this.emit(':responseReady');
+    },
+      err => {
+        console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
+      });
   },
   'ChangeAvailability': function () {
+    let docClient = new AWS.DynamoDB.DocumentClient();
     let say = 'Hello from ChangeAvailability. ';
-    var slotStatus = '';
-    var resolvedSlot;
-    //   SLOT: availability 	
+    let slotStatus = '';
+    let resolvedSlot = null;
+
     if (this.event.request.intent.slots.availability.value) {
       const availability = this.event.request.intent.slots.availability;
       slotStatus += ' slot availability was heard as ' + availability.value + '. ';
@@ -134,32 +139,79 @@ const handlers = {
     } else {
       slotStatus += ' slot availability is empty. ';
     }
-    say += slotStatus;
-    this.response
-      .speak(say)
-      .listen('try again, ' + say);
-    this.emit(':responseReady');
+
+    console.log(slotStatus);
+
+    if (resolvedSlot) {
+      const userId = this.event['session']['user']['userId'];
+      const isFree = resolvedSlot !== 'busy';
+      
+      const params = {
+        TableName: 'd2hTable',
+        Key: { "User": userId },
+        UpdateExpression: "SET #u_free = :is_free",
+        ExpressionAttributeNames: { '#u_free': 'Free' },
+        ExpressionAttributeValues: { ":is_free": isFree },
+        ReturnValues: "UPDATED_NEW"
+      }
+
+      docClient.update(params).promise()
+      .then(data => {
+        console.log(data);
+        say = "your availability was updated to " + isFree;
+        this.response.speak(say).listen('try again, ' + say);
+        this.emit(':responseReady');
+      },
+      err => {
+        console.log(err);
+        say = "error happeened";
+      });
+    } 
+    else {
+      say = "I'm sorry I don't know what you mean, please reformulate";
+      this.response.speak(say).listen('try again, ' + say);
+      this.emit(':responseReady');
+    }
   },
   'RegisterMe': function () {
-    let say = 'Hello from RegisterMe. ';
-    var slotStatus = '';
+    let say = '';
+    let docClient = new AWS.DynamoDB.DocumentClient();
     var resolvedSlot;
-    //   SLOT: name 	
+    //   SLOT: name 
+
     if (this.event.request.intent.slots.name.value) {
+      const userId = this.event.session.user.userId
       const name = this.event.request.intent.slots.name;
-      slotStatus += ' slot name was heard as ' + name.value + '. ';
+
       resolvedSlot = resolveCanonical(name);
-      if (resolvedSlot != name.value) {
-        slotStatus += ' which resolved to ' + resolvedSlot;
-      }
+
+      let params = {
+        TableName: "d2hTable",
+        Item: {
+          "User": userId,
+          "Name": resolvedSlot
+        }
+      };
+
+      docClient.put(params).promise()
+      .then(data => {
+        console.log('Inserted Row Data');
+        console.log(data);
+        say += `${resolvedSlot} has been added to the registry! `;
+
+        this.response.speak(say).listen('try again, ' + say);
+        this.emit(':responseReady');
+      },
+        err => {
+          console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
+        }
+      );
+
     } else {
-      slotStatus += ' slot name is empty. ';
+      say += ' Sorry, I didn\'t catch your name ';
+      this.response.speak(say).listen('try again, ' + say);
+      this.emit(':responseReady');
     }
-    say += slotStatus;
-    this.response
-      .speak(say)
-      .listen('try again, ' + say);
-    this.emit(':responseReady');
   },
   'LaunchRequest': function () {
     let say = this.t('WELCOME1') + ' ' + this.t('HELP');
@@ -261,273 +313,312 @@ function routeToIntent() {
       this.emit('LaunchRequest');
   }
 }
-
 // *********************************** 
 // ** Dialog Management 
 // *********************************** 
-
-function getSlotValues(filledSlots) {
+ 
+function getSlotValues (filledSlots) { 
   //given event.request.intent.slots, a slots values object so you have 
   //what synonym the person said - .synonym 
   //what that resolved to - .resolved 
   //and if it's a word that is in your slot values - .isValidated 
-  let slotValues = {};
+  let slotValues = {}; 
 
-  console.log('The filled slots: ' + JSON.stringify(filledSlots));
-  Object.keys(filledSlots).forEach(function (item) {
-    //console.log("item in filledSlots: "+JSON.stringify(filledSlots[item])); 
-    var name = filledSlots[item].name;
-    //console.log("name: "+name); 
-    if (filledSlots[item] &&
-      filledSlots[item].resolutions &&
-      filledSlots[item].resolutions.resolutionsPerAuthority[0] &&
-      filledSlots[item].resolutions.resolutionsPerAuthority[0].status &&
-      filledSlots[item].resolutions.resolutionsPerAuthority[0].status.code) {
+  console.log('The filled slots: ' + JSON.stringify(filledSlots)); 
+  Object.keys(filledSlots).forEach(function(item) { 
+      //console.log("item in filledSlots: "+JSON.stringify(filledSlots[item])); 
+      var name = filledSlots[item].name; 
+      //console.log("name: "+name); 
+      if(filledSlots[item]&& 
+          filledSlots[item].resolutions && 
+          filledSlots[item].resolutions.resolutionsPerAuthority[0] && 
+          filledSlots[item].resolutions.resolutionsPerAuthority[0].status && 
+          filledSlots[item].resolutions.resolutionsPerAuthority[0].status.code ) { 
 
-      switch (filledSlots[item].resolutions.resolutionsPerAuthority[0].status.code) {
-        case "ER_SUCCESS_MATCH":
-          slotValues[name] = {
-            "synonym": filledSlots[item].value,
-            "resolved": filledSlots[item].resolutions.resolutionsPerAuthority[0].values[0].value.name,
-            "isValidated": true
-          };
-          break;
-        case "ER_SUCCESS_NO_MATCH":
-          slotValues[name] = {
-            "synonym": filledSlots[item].value,
-            "resolved": filledSlots[item].value,
-            "isValidated": false
-          };
-          break;
-      }
-    } else {
-      slotValues[name] = {
-        "synonym": filledSlots[item].value,
-        "resolved": filledSlots[item].value,
-        "isValidated": false
-      };
-    }
-  }, this);
+          switch (filledSlots[item].resolutions.resolutionsPerAuthority[0].status.code) { 
+              case "ER_SUCCESS_MATCH": 
+                  slotValues[name] = { 
+                      "synonym": filledSlots[item].value, 
+                      "resolved": filledSlots[item].resolutions.resolutionsPerAuthority[0].values[0].value.name, 
+                      "isValidated": true 
+                  }; 
+                  break; 
+              case "ER_SUCCESS_NO_MATCH": 
+                  slotValues[name] = { 
+                      "synonym": filledSlots[item].value, 
+                      "resolved": filledSlots[item].value, 
+                      "isValidated":false 
+                  }; 
+                  break; 
+          } 
+      } else { 
+          slotValues[name] = { 
+              "synonym": filledSlots[item].value, 
+              "resolved": filledSlots[item].value, 
+              "isValidated": false 
+          }; 
+      } 
+  },this); 
   //console.log("slot values: "+JSON.stringify(slotValues)); 
-  return slotValues;
-}
+  return slotValues; 
+} 
 // This function delegates multi-turn dialogs to Alexa. 
 // For more information about dialog directives see the link below. 
 // https://developer.amazon.com/docs/custom-skills/dialog-interface-reference.html 
-function delegateSlotCollection() {
-  console.log("in delegateSlotCollection");
-  console.log("current dialogState: " + this.event.request.dialogState);
+function delegateSlotCollection() { 
+  console.log("in delegateSlotCollection"); 
+  console.log("current dialogState: " + this.event.request.dialogState); 
 
-  if (this.event.request.dialogState === "STARTED") {
-    console.log("in STARTED");
-    console.log(JSON.stringify(this.event));
-    var updatedIntent = this.event.request.intent;
-    // optionally pre-fill slots: update the intent object with slot values 
-    // for which you have defaults, then return Dialog.Delegate with this 
-    // updated intent in the updatedIntent property 
+  if (this.event.request.dialogState === "STARTED") { 
+      console.log("in STARTED"); 
+      console.log(JSON.stringify(this.event)); 
+      var updatedIntent=this.event.request.intent; 
+      // optionally pre-fill slots: update the intent object with slot values 
+      // for which you have defaults, then return Dialog.Delegate with this 
+      // updated intent in the updatedIntent property 
 
-    disambiguateSlot.call(this);
-    console.log("disambiguated: " + JSON.stringify(this.event));
-    this.emit(":delegate", updatedIntent);
-  } else if (this.event.request.dialogState !== "COMPLETED") {
-    console.log("in not completed");
-    //console.log(JSON.stringify(this.event)); 
+      disambiguateSlot.call(this); 
+      console.log("disambiguated: " + JSON.stringify(this.event)); 
+      this.emit(":delegate", updatedIntent); 
+  } else if (this.event.request.dialogState !== "COMPLETED") { 
+      console.log("in not completed"); 
+      //console.log(JSON.stringify(this.event)); 
 
-    disambiguateSlot.call(this);
-    this.emit(":delegate", updatedIntent);
-  } else {
-    console.log("in completed");
-    //console.log("returning: "+ JSON.stringify(this.event.request.intent)); 
-    // Dialog is now complete and all required slots should be filled, 
-    // so call your normal intent handler. 
-    return this.event.request.intent.slots;
-  }
-  return null;
-}
+      disambiguateSlot.call(this); 
+      this.emit(":delegate", updatedIntent); 
+  } else { 
+      console.log("in completed"); 
+      //console.log("returning: "+ JSON.stringify(this.event.request.intent)); 
+      // Dialog is now complete and all required slots should be filled, 
+      // so call your normal intent handler. 
+      return this.event.request.intent.slots; 
+  } 
+  return null; 
+} 
 // If the user said a synonym that maps to more than one value, we need to ask 
 // the user for clarification. Disambiguate slot will loop through all slots and 
 // elicit confirmation for the first slot it sees that resolves to more than 
 // one value. 
-function disambiguateSlot() {
-  let currentIntent = this.event.request.intent;
+function disambiguateSlot() { 
+  let currentIntent = this.event.request.intent; 
 
-  Object.keys(this.event.request.intent.slots).forEach(function (slotName) {
-    let currentSlot = this.event.request.intent.slots[slotName];
-    let slotValue = slotHasValue(this.event.request, currentSlot.name);
-    if (currentSlot.confirmationStatus !== 'CONFIRMED' &&
-      currentSlot.resolutions &&
-      currentSlot.resolutions.resolutionsPerAuthority[0]) {
+  Object.keys(this.event.request.intent.slots).forEach(function(slotName) { 
+      let currentSlot = this.event.request.intent.slots[slotName]; 
+      let slotValue = slotHasValue(this.event.request, currentSlot.name); 
+      if (currentSlot.confirmationStatus !== 'CONFIRMED' && 
+          currentSlot.resolutions && 
+          currentSlot.resolutions.resolutionsPerAuthority[0]) { 
 
-      if (currentSlot.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_MATCH') {
-        // if there's more than one value that means we have a synonym that 
-        // mapped to more than one value. So we need to ask the user for 
-        // clarification. For example if the user said "mini dog", and 
-        // "mini" is a synonym for both "small" and "tiny" then ask "Did you 
-        // want a small or tiny dog?" to get the user to tell you 
-        // specifically what type mini dog (small mini or tiny mini). 
-        if (currentSlot.resolutions.resolutionsPerAuthority[0].values.length > 1) {
-          let prompt = 'Which would you like';
-          let size = currentSlot.resolutions.resolutionsPerAuthority[0].values.length;
-          currentSlot.resolutions.resolutionsPerAuthority[0].values.forEach(function (element, index, arr) {
-            prompt += ` ${(index == size - 1) ? ' or' : ' '} ${element.value.name}`;
-          });
+          if (currentSlot.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_MATCH') { 
+              // if there's more than one value that means we have a synonym that 
+              // mapped to more than one value. So we need to ask the user for 
+              // clarification. For example if the user said "mini dog", and 
+              // "mini" is a synonym for both "small" and "tiny" then ask "Did you 
+              // want a small or tiny dog?" to get the user to tell you 
+              // specifically what type mini dog (small mini or tiny mini). 
+              if ( currentSlot.resolutions.resolutionsPerAuthority[0].values.length > 1) { 
+                  let prompt = 'Which would you like'; 
+                  let size = currentSlot.resolutions.resolutionsPerAuthority[0].values.length; 
+                  currentSlot.resolutions.resolutionsPerAuthority[0].values.forEach(function(element, index, arr) { 
+                      prompt += ` ${(index == size -1) ? ' or' : ' '} ${element.value.name}`; 
+                  }); 
 
-          prompt += '?';
-          let reprompt = prompt;
-          // In this case we need to disambiguate the value that they 
-          // provided to us because it resolved to more than one thing so 
-          // we build up our prompts and then emit elicitSlot. 
-          this.emit(':elicitSlot', currentSlot.name, prompt, reprompt);
-        }
-      } else if (currentSlot.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
-        // Here is where you'll want to add instrumentation to your code 
-        // so you can capture synonyms that you haven't defined. 
-        console.log("NO MATCH FOR: ", currentSlot.name, " value: ", currentSlot.value);
+                  prompt += '?'; 
+                  let reprompt = prompt; 
+                  // In this case we need to disambiguate the value that they 
+                  // provided to us because it resolved to more than one thing so 
+                  // we build up our prompts and then emit elicitSlot. 
+                  this.emit(':elicitSlot', currentSlot.name, prompt, reprompt); 
+              } 
+          } else if (currentSlot.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') { 
+              // Here is where you'll want to add instrumentation to your code 
+              // so you can capture synonyms that you haven't defined. 
+              console.log("NO MATCH FOR: ", currentSlot.name, " value: ", currentSlot.value); 
 
-        if (REQUIRED_SLOTS.indexOf(currentSlot.name) > -1) {
-          let prompt = "What " + currentSlot.name + " are you looking for";
-          this.emit(':elicitSlot', currentSlot.name, prompt, prompt);
-        }
-      }
-    }
-  }, this);
-}
+              if (REQUIRED_SLOTS.indexOf(currentSlot.name) > -1) { 
+                  let prompt = "What " + currentSlot.name + " are you looking for"; 
+                  this.emit(':elicitSlot', currentSlot.name, prompt, prompt); 
+              } 
+          } 
+      } 
+  }, this); 
+} 
 
 // Given the request an slot name, slotHasValue returns the slot value if one 
 // was given for `slotName`. Otherwise returns false. 
-function slotHasValue(request, slotName) {
+function slotHasValue(request, slotName) { 
 
-  let slot = request.intent.slots[slotName];
+  let slot = request.intent.slots[slotName]; 
 
   //uncomment if you want to see the request 
   //console.log("request = "+JSON.stringify(request)); 
-  let slotValue;
+  let slotValue; 
 
   //if we have a slot, get the text and store it into speechOutput 
-  if (slot && slot.value) {
-    //we have a value in the slot 
-    slotValue = slot.value.toLowerCase();
-    return slotValue;
-  } else {
-    //we didn't get a value in the slot. 
-    return false;
-  }
-}
+  if (slot && slot.value) { 
+      //we have a value in the slot 
+      slotValue = slot.value.toLowerCase(); 
+      return slotValue; 
+  } else { 
+      //we didn't get a value in the slot. 
+      return false; 
+  } 
+} 
 // End Skill Code
 // Language Model  for reference
 var interactionModel = [
-  {
-    "name": "AMAZON.NavigateHomeIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.CancelIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.HelpIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.StopIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.YesIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.NoIntent",
-    "samples": []
-  },
-  {
-    "name": "FindAvailableFriends",
-    "slots": [],
-    "samples": [
-      "who's available",
-      "who's free",
-      "whomst's down to hang",
-      "who is trying to bool",
-      "who wants to chill",
-      "who is willing to hang",
-      "Who is available",
-      "Who's down to hang",
-      "Which of my friends are free"
-    ]
-  },
-  {
-    "name": "ChangeAvailability",
-    "slots": [
-      {
-        "name": "availability",
-        "type": "availability"
-      }
-    ],
-    "samples": [
-      "im {availability}",
-      "i {availability}",
-      "I'm {availability} now",
-      "set my status to {availability}"
-    ]
-  },
-  {
-    "name": "RegisterMe",
-    "slots": [
-      {
-        "name": "name",
-        "type": ""
-      }
-    ],
-    "samples": [
-      "register {name}",
-      "add {name} to system"
-    ]
-  },
-  {
-    "name": "LaunchRequest"
-  }
+{
+  "name": "AMAZON.NavigateHomeIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.CancelIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.HelpIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.StopIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.YesIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.NoIntent",
+  "samples": []
+},
+{
+  "name": "FindAvailableFriends",
+  "slots": [],
+  "samples": [
+    "who's available",
+    "who's free",
+    "whomst's down to hang",
+    "who is trying to bool",
+    "who wants to chill",
+    "who is willing to hang",
+    "Who is available",
+    "Who's down to hang",
+    "Which of my friends are free"
+  ]
+},
+{
+  "name": "ChangeAvailability",
+  "slots": [
+    {
+      "name": "availability",
+      "type": "availability"
+    }
+  ],
+  "samples": [
+    "Tell everyone that I am {availability}",
+    "tell my friends that I am {availability} right now",
+    "change my availability to {availability}",
+    "im {availability}",
+    "i {availability}",
+    "I'm {availability} now",
+    "set my status to {availability}"
+  ]
+},
+{
+  "name": "RegisterMe",
+  "slots": [
+    {
+      "name": "name",
+      "type": "AMAZON.US_FIRST_NAME"
+    }
+  ],
+  "samples": [
+    "add {name} to registry",
+    "register {name} into the system",
+    "add me into the system as {name}",
+    "register {name}",
+    "add {name} to system"
+  ]
+},
+{
+  "name": "LaunchRequest"
+}
 ];
 var intentsReference = [
-  {
-    "name": "AMAZON.NavigateHomeIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.CancelIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.HelpIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.StopIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.YesIntent",
-    "samples": []
-  },
-  {
-    "name": "AMAZON.NoIntent",
-    "samples": []
-  },
-  {
-    "name": "FindAvailableFriends",
-    "slots": [],
-    "samples": [
-      "who's available",
-      "who's free",
-      "whomst's down to hang",
-      "who is trying to bool",
-      "who wants to chill",
-      "who is willing to hang",
-      "Who is available",
-      "Who's down to hang",
-      "Which of my friends are free"
-    ]
-  },
-  {
-    "name": "LaunchRequest"
-  }
+{
+  "name": "AMAZON.NavigateHomeIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.CancelIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.HelpIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.StopIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.YesIntent",
+  "samples": []
+},
+{
+  "name": "AMAZON.NoIntent",
+  "samples": []
+},
+{
+  "name": "FindAvailableFriends",
+  "slots": [],
+  "samples": [
+    "who's available",
+    "who's free",
+    "whomst's down to hang",
+    "who is trying to bool",
+    "who wants to chill",
+    "who is willing to hang",
+    "Who is available",
+    "Who's down to hang",
+    "Which of my friends are free"
+  ]
+},
+{
+  "name": "ChangeAvailability",
+  "slots": [
+    {
+      "name": "availability",
+      "type": "availability"
+    }
+  ],
+  "samples": [
+    "Tell everyone that I am {availability}",
+    "tell my friends that I am {availability} right now",
+    "change my availability to {availability}",
+    "im {availability}",
+    "i {availability}",
+    "I'm {availability} now",
+    "set my status to {availability}"
+  ]
+},
+{
+  "name": "RegisterMe",
+  "slots": [
+    {
+      "name": "name",
+      "type": "AMAZON.US_FIRST_NAME"
+    }
+  ],
+  "samples": [
+    "add {name} to registry",
+    "register {name} into the system",
+    "add me into the system as {name}",
+    "register {name}",
+    "add {name} to system"
+  ]
+},
+{
+  "name": "LaunchRequest"
+}
 ];
