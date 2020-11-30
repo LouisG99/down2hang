@@ -16,6 +16,7 @@
     "dynamodb-doc": "^1.0.0",
     "http": "*",
     "https": "^1.0.0",
-    "i18next": "^15.0.5"
+    "i18next": "^15.0.5",
+    "moment-timezone": "^0.5.32"
   }
 }
