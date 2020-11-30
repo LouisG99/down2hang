@@ -141,8 +141,6 @@ const handlers = {
     let docClient = new AWS.DynamoDB.DocumentClient();
     let say = 'Hello from ChangeAvailability. ';
     let availabilitySlotStatus = '';
-    let startTimeSlotStatus = '';
-    let endTimeSlotStatus = '';
     let resolvedSlot = null;
 
     if (this.event.request.intent.slots.availability.value) {
@@ -155,30 +153,6 @@ const handlers = {
     } else {
       availabilitySlotStatus += ' slot availability is empty. ';
     }
-
-    if (this.event.request.intent.slots.startTime.value) {
-      const startTime = this.event.request.intent.slots.startTime;
-      startTimeSlotStatus += ' slot startTime was heard as ' + startTime.value + '. ';
-      resolvedSlot = resolveCanonical(startTime);
-      if (resolvedSlot != startTime.value) {
-        startTimeSlotStatus += ' which resolved to ' + resolvedSlot;
-      }
-    } else {
-      startTimeSlotStatus += ' slot startTime is empty. ';
-    }
-
-    if (this.event.request.intent.slots.endTime.value) {
-      const endTime = this.event.request.intent.slots.endTime;
-      endTimeSlotStatus += ' slot endTime was heard as ' + endTime.value + '. ';
-      resolvedSlot = resolveCanonical(endTime);
-      if (resolvedSlot != endTime.value) {
-        endTimeSlotStatus += ' which resolved to ' + resolvedSlot;
-      }
-    } else {
-      endTimeSlotStatus += ' slot endTime is empty. ';
-    }
-
-
 
     if (resolvedSlot) {
       const userId = this.event['session']['user']['userId'];
