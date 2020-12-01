@@ -189,7 +189,6 @@ const handlers = {
     let say = '';
     let docClient = new AWS.DynamoDB.DocumentClient();
     var resolvedSlot;
-    //   SLOT: name 
 
     if (this.event.request.intent.slots.name.value) {
       const userId = this.event.session.user.userId
@@ -201,23 +200,24 @@ const handlers = {
         TableName: "d2hTable",
         Item: {
           "User": userId,
-          "Name": resolvedSlot
+          "Name": resolvedSlot, 
+          "Groups": []
         }
       };
 
       docClient.put(params).promise()
-        .then(data => {
-          console.log('Inserted Row Data');
-          console.log(data);
-          say += `${resolvedSlot} has been added to the registry! `;
+      .then(data => {
+        console.log('Inserted Row Data');
+        console.log(data);
+        say += `${resolvedSlot} has been added to the registry! `;
 
-          this.response.speak(say).listen('try again, ' + say);
-          this.emit(':responseReady');
-        },
-          err => {
-            console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
-          }
-        );
+        this.response.speak(say).listen('try again, ' + say);
+        this.emit(':responseReady');
+      },
+        err => {
+          console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
+        }
+      );
 
     } else {
       say += ' Sorry, I didn\'t catch your name ';
@@ -233,10 +233,10 @@ const handlers = {
     if (this.event.request.intent.slots.group.value) {
       const group = this.event.request.intent.slots.group;
       slotStatus += ' slot group was heard as ' + group.value + '. ';
-      groupName = resolveCanonical(group);
+      groupName = resolveCanonical(group).toLowerCase();
 
-      if(groupName != group.value) {
-        slotStatus += ' which resolved to ' + groupName; 
+      if (groupName != group.value) {
+        slotStatus += ' which resolved to ' + groupName;
       }
     } else {
       slotStatus += ' slot group is empty. ';
@@ -248,45 +248,37 @@ const handlers = {
         .speak(say)
         .listen('try again, ' + say);
 
-      this.emit(':responseReady'); 
-    } else  {
+      this.emit(':responseReady');
+    } else {
       // create group in GROUPs table
 
       let docClient = new AWS.DynamoDB.DocumentClient();
       let params = {
         TableName: "Groups",
         Item: {
-          "Name": groupName, 
+          "Name": groupName,
           "Members": [] // add current user later in this function
         }
       };
 
       docClient.put(params).promise() //adding to Groups Table
-      .then(data => {
-        console.log('Inserted Row Data');
-        console.log(data);
-        say += `You've been added to the ${groupName} group! `;
+        .then(data => {
+          console.log('Inserted Row Data');
+          console.log(data);
+          say += `The ${groupName} group was created! `;
+        },
+          err => {
+            console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
+          }
+        )
+        .then(() => {
+          this.response.speak(say).listen('try again, ' + say);
+          this.emit(':responseReady');
+        });
 
-        this.response.speak(say).listen('try again, ' + say);
-        this.emit(':responseReady');
-      },
-        err => {
-          console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
-        }
-      );
-
-        //add to the list of groups in USERS TABLE
-        //create new item on GROUPS table
-
-      
-      say += "We have successfully added you to " + groupName;
-
-      this.response
-        .speak(say)
-        .listen('try again, ' + say);
-      this.emit(':responseReady'); 
+      //add to the list of groups in USERS TABLE
     }
-},
+  },
   'LeaveGroup': function () {
     let say = 'Hello from LeaveGroup. ';
 
@@ -310,10 +302,10 @@ const handlers = {
     // TODO: Business Logic
     // Remove self from group table
     // remove group from self
-    if (groupName){
+    if (groupName) {
 
     }
-    
+
 
     say += slotStatus;
 
@@ -325,36 +317,72 @@ const handlers = {
     this.emit(':responseReady');
   },
   'JoinGroup': function () {
-    let say = 'Hello from JoinGroup. ';
+    let say = '';
+    let slotStatus = '';
+    let groupName = null;
 
-    var slotStatus = '';
-    var resolvedSlot;
-
-    //   SLOT: group 
     if (this.event.request.intent.slots.group.value) {
       const group = this.event.request.intent.slots.group;
       slotStatus += ' slot group was heard as ' + group.value + '. ';
+      groupName = resolveCanonical(group).toLowerCase();
 
-      resolvedSlot = resolveCanonical(group);
-
-      if (resolvedSlot != group.value) {
-        slotStatus += ' which resolved to ' + resolvedSlot;
+      if (groupName != group.value) {
+        slotStatus += ' which resolved to ' + groupName;
       }
     } else {
       slotStatus += ' slot group is empty. ';
     }
 
+    if (groupName === null) {
+      say = "Please give me a valid group name";
+      this.response
+        .speak(say)
+        .listen('try again, ' + say);
 
-    say += slotStatus;
+      this.emit(':responseReady');
+    } else {
+      const userId = this.event['session']['user']['userId'];
+      let docClient = new AWS.DynamoDB.DocumentClient();
+      const paramsUserUpdate = {
+        TableName: 'd2hTable',
+        Key: { "User": userId },
+        UpdateExpression: "SET #u_groups = list_append(#u_groups, :u_groupName)",
+        ExpressionAttributeValues: { ':u_groupName': [groupName] },
+        ExpressionAttributeNames: { '#u_groups': 'Groups' },
+        ReturnValues: "UPDATED_NEW"
+      };
+      const paramsGroupsUpdate = {
+        TableName: 'Groups',
+        Key: { "Name": groupName },
+        UpdateExpression: "SET #u_members = list_append(#u_members, :u_userId)",
+        ExpressionAttributeValues: { ':u_userId': [userId] },
+        ExpressionAttributeNames: { '#u_members': 'Members' },
+        ReturnValues: "UPDATED_NEW"
+      };
 
-    this.response
-      .speak(say)
-      .listen('try again, ' + say);
-
-
-    this.emit(':responseReady');
+      docClient.update(paramsGroupsUpdate).promise() // add to "Groups" list in d2htable (users)
+      .then(data => {
+        console.log(data);
+        return docClient.update(paramsUserUpdate).promise();
+      },
+      err => {
+        console.log(err);
+        say = "error happened, group probably doesn't exist";
+      })
+      .then(data => {
+        console.log(data);
+        say = `You've been added to group ${groupName}`;
+      },
+      err => {
+        console.log(err);
+        say = "error happened, user probably doesn't exits or doesn't have groups lisy";
+      })
+      .then(() => {
+        this.response.speak(say).listen('try again, ' + say);
+        this.emit(':responseReady');
+      });
+    }
   },
-  // TODO: new intents for create group and join group
   'LaunchRequest': function () {
     let say = this.t('WELCOME1') + ' ' + this.t('HELP');
     this.response
