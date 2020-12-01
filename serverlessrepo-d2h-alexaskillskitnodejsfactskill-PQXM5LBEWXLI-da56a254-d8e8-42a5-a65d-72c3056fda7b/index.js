@@ -20,10 +20,6 @@ const https = require("https");
 const AWS = require("aws-sdk");
 const dynamodb_doc = require("dynamodb-doc");
 
-/**
- * TODO:
- * add transfer of what user sending request is and use that to update availbility AND return who's free (exclude yourself)
- */
 
 module.exports.handler = function (event, context, callback) {
   let alexa = Alexa.handler(event, context);
@@ -94,48 +90,77 @@ const handlers = {
   },
   'FindAvailableFriends': function () {
     let docClient = new AWS.DynamoDB.DocumentClient();
-    let say = "segfault";
 
-    // let groupSlotStatus = '';
-    // let resolvedSlot = null;
+    let say = '';
+    let slotStatus = '';
+    let groupName = null;
 
-    // if (this.event.request.intent.slots.group.value) {
-    //   const group = this.event.request.intent.slots.group;
-    //   groupSlotStatus += ' slot group was heard as ' + group.value + '. ';
-    //   resolvedSlot = resolveCanonical(group);
-    //   if (resolvedSlot != group.value) {
-    //     groupSlotStatus += ' which resolved to ' + resolvedSlot;
-    //   }
-    // } else {
-    //   groupSlotStatus += ' slot group is empty. ';
-    // }
+    if (this.event.request.intent.slots.group.value) {
+      const group = this.event.request.intent.slots.group;
+      slotStatus += ' slot group was heard as ' + group.value + '. ';
+      groupName = resolveCanonical(group).toLowerCase();
 
-    let params = {
-      TableName: "d2hTable",
-      FilterExpression: '#u_free = :val',
-      ExpressionAttributeNames: { '#u_free': 'Free' },
-      ExpressionAttributeValues: { ':val': true }
-    };
+      if (groupName != group.value) {
+        slotStatus += ' which resolved to ' + groupName;
+      }
+    } else {
+      slotStatus += ' slot group is empty. ';
+    }
 
-    console.log(this.event, this.context)
-    let userId = this.event['session']['user']['userId'];
+    if (groupName === null) {
+      say = "Please give me a valid group name";
+      this.response
+        .speak(say)
+        .listen('try again, ' + say);
 
-    docClient.scan(params).promise()
-      .then(data => {
-        console.log(data);
-        say = "The following people are down to hang right now: ";
-        data.Items.forEach(function (item) {
-          if (item['User'] !== userId) {
-            say += item['Name'] + ', ';
-          }
-        });
+      this.emit(':responseReady');
+      return;
+    }
 
-        this.response.speak(say).listen('try again, ' + say);
-        this.emit(':responseReady');
-      },
-        err => {
-          console.error("Unable to query. Error:", JSON.stringify(err, null, 2));
-        });
+    let groupMembers = null;
+    let paramsGroupGet = {
+      TableName: "Groups",
+      FilterExpression: '#u_name = :val',
+      ExpressionAttributeNames: { '#u_name': 'Name' },
+      ExpressionAttributeValues: { ':val': groupName }
+    }
+
+    docClient.scan(paramsGroupGet).promise()
+    .then(groupData => { // assume data.size() == 1
+      groupMembers = new Set(groupData.Items[0]['Members']);
+    },
+    err => {
+      console.log(err);
+      say = "error happened, group probably doesn't exist";
+    })
+    .then(() => {
+      let paramsUsersGet = { //query who is free from this list
+        TableName: "d2hTable",
+        FilterExpression: '#u_free = :val',
+        ExpressionAttributeNames: { '#u_free': 'Free' },
+        ExpressionAttributeValues: { ':val': true }
+      };
+      
+      return docClient.scan(paramsUsersGet).promise();
+    })
+    .then(data => {
+      console.log(data);
+      const userId = this.event['session']['user']['userId'];
+      say = `The following people from the ${groupName} group are down to hang right now: `;
+      data.Items.forEach(function (item) {
+        if (item['User'] !== userId && groupMembers.has(item['User'])) {
+          say += item['Name'] + ', ';
+        }
+      });
+    },
+    err => {
+      console.log(err);
+      say = "error happened, user probably doesn't exist";
+    })
+    .then(() => {
+      this.response.speak(say).listen('try again, ' + say);
+      this.emit(':responseReady');
+    });
   },
   'ChangeAvailability': function () {
     let docClient = new AWS.DynamoDB.DocumentClient();
