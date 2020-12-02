@@ -75,7 +75,6 @@ const handlers = {
       .speak(say)
       .listen('try again, ' + say);
 
-
     this.emit(':responseReady');
   },
   'AMAZON.NoIntent': function () {
@@ -84,7 +83,6 @@ const handlers = {
     this.response
       .speak(say)
       .listen('try again, ' + say);
-
 
     this.emit(':responseReady');
   },
@@ -117,17 +115,21 @@ const handlers = {
       return;
     }
 
-    let groupMembers = null;
+    const userId = this.event['session']['user']['userId'];
+    let groupMembers = new Set();
     let paramsGroupGet = {
       TableName: "Groups",
       FilterExpression: '#u_name = :val',
       ExpressionAttributeNames: { '#u_name': 'Name' },
       ExpressionAttributeValues: { ':val': groupName }
     }
-
+    
     docClient.scan(paramsGroupGet).promise()
     .then(groupData => { // assume data.size() == 1
-      groupMembers = new Set(groupData.Items[0]['Members']);
+      console.log(groupData);
+      groupData.Items.forEach(item => {
+        groupMembers = new Set(item['Members']);
+      });
     },
     err => {
       console.log(err);
@@ -145,13 +147,16 @@ const handlers = {
     })
     .then(data => {
       console.log(data);
-      const userId = this.event['session']['user']['userId'];
-      say = `The following people from the ${groupName} group are down to hang right now: `;
-      data.Items.forEach(function (item) {
-        if (item['User'] !== userId && groupMembers.has(item['User'])) {
-          say += item['Name'] + ', ';
-        }
-      });
+      if (!groupMembers.has(user_id)) {
+        say = `You're not part of the ${groupName} group so you can't check its availability.`;
+      } else {
+        say = `The following people from the ${groupName} group are down to hang right now: `;
+        data.Items.forEach(function (item) {
+          if (item['User'] !== userId && groupMembers.has(item['User'])) {
+            say += item['Name'] + ', ';
+          }
+        });
+      }
     },
     err => {
       console.log(err);
@@ -193,16 +198,16 @@ const handlers = {
       }
 
       docClient.update(params).promise()
-        .then(data => {
-          console.log(data);
-          say = "your availability was updated to " + isFree;
-          this.response.speak(say).listen('try again, ' + say);
-          this.emit(':responseReady');
-        },
-          err => {
-            console.log(err);
-            say = "error happeened";
-          });
+      .then(data => {
+        console.log(data);
+        say = "your availability was updated to " + isFree;
+        this.response.speak(say).listen('try again, ' + say);
+        this.emit(':responseReady');
+      },
+      err => {
+        console.log(err);
+        say = "error happeened";
+      });
     }
     else {
       say = "I'm sorry I don't know what you mean, please reformulate";
